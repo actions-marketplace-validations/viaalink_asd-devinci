@@ -1,137 +1,88 @@
-# DevInCi - Dev in CI
+# Viaalink CI Terminal
 
-Full development environment inside GitHub Actions runners with web terminal, VS Code, tunnels, and complete ASD CLI access. Just click the URL to connect - no SSH keys required.
+A browser terminal (ttyd) or VS Code (code-server) on your CI runner, published through your own Viaalink Relay, behind a login. Start it from your laptop, open the link, and you are working inside the runner: the checked-out repository, the toolchain and the environment your pipeline sees. Useful to debug a job that only fails in CI, or to work on a machine you do not have locally. Nothing is opened on the runner itself: it connects out to your relay over SSH, and the relay serves the session under its own domain.
 
-*DevInCi (Dev in CI) by ASD (Accelerated Software Development B.V.)*
+> **The CLI command.** `uses: viaalink/ci-terminal@v2` works today. The `via ci install` command that writes this workflow for you comes with the next Viaalink CLI release; until then the command is `via devinci install`, which installs a self-contained workflow that `via gh terminal` starts the same way.
 
-## Features
+## Quick start
 
-- **Web Terminal (ttyd)**: Full terminal in your browser
-- **VS Code (code-server)**: VS Code IDE in your browser
-- **Cloud Tunnel**: Instant public URL with embedded credentials
-- **Full ASD CLI**: All commands available (`asd net`, `asd caddy`, `asd expose`, etc.)
-- **Three Auth Modes**: Pre-existing credentials, API key, or ephemeral tokens
-- **Auto Server Discovery**: Tunnel host, port, and ownership fetched from API
-- **Cross-Platform**: Works on Linux, macOS, and Windows runners
-- **No SSH Keys**: Just click the URL to connect
+You need the [Viaalink CLI](https://github.com/viaalink/cli) (`via`; `asd` still works as an alias) and a relay you are enrolled on.
 
-## Quick Start
+```bash
+# In your repository: installs .github/workflows/terminal.yml
+via ci install
 
-### Basic Usage (Ephemeral Mode)
+# Commit and push it
+git add .github/workflows/terminal.yml
+git commit -m "ci: add terminal workflow"
+git push
+
+# Store the relay key and the login password as secrets (see Set up), then:
+via gh terminal
+```
+
+`via gh terminal` asks for the operating system, shell, username and session name, starts the run and prints the URL once the session is up. When sessions are already running it offers to reconnect to one of them.
+
+## Set up
+
+The runner reaches your relay with a device key, and the login in front of the session uses a password. Both are kept in repository secrets.
+
+On a device enrolled on your relay (`via relay add '<invite link>'`), run in your repository:
+
+```bash
+via gh setup
+```
+
+It stores these secrets without printing them:
+
+| Secret | What | |
+|--------|------|---|
+| `VIA_TUNNEL_KEY` | the device key (base64) | required |
+| `VIA_TUNNEL_KEY_ID` | the device key's id | required |
+| `VIA_TUNNEL_HOST` | the relay host | required |
+| `VIA_TUNNEL_PORT` | the relay SSH port | optional, 2222 when unset |
+| `VIA_TUNNEL_HOST_KEY_FINGERPRINTS` | the relay's SSH host key fingerprints (`SHA256:...`, comma separated) | required: the CLI never connects to a relay whose host key it cannot pin |
+| `VIA_TERMINAL_PASSWORD` | the password of the login in front of the session | required |
+
+To store them by hand instead, `via auth export` prints the relay values; set each one with `gh secret set <NAME> --repo <owner>/<repo>`.
+
+**Enrol a device for CI alone.** Ask your relay for a separate invite link for CI and enrol it on a machine (or container) that has no other relay, so the key in the secrets is not your own. It can then be removed from the relay without touching your own devices.
+
+There is no default relay: the session is always published through the relay whose key you give it.
+
+## Use
+
+```bash
+via gh terminal
+```
+
+Pick the options, wait for the URL, open it and sign in with the username you chose and the `VIA_TERMINAL_PASSWORD` password. The same URL is in the run's summary and in its `tunnel-url-<session name>` artifact.
+
+### In your own workflow
+
+`via ci install` writes a short workflow that uses this action. To add a session to a workflow of your own, use the action directly:
 
 ```yaml
-- uses: asd-engineering/asd-devinci@v1
+- uses: viaalink/ci-terminal@v2
   with:
+    tunnel-key: ${{ secrets.VIA_TUNNEL_KEY }}
+    tunnel-key-id: ${{ secrets.VIA_TUNNEL_KEY_ID }}
+    tunnel-host: ${{ secrets.VIA_TUNNEL_HOST }}
+    tunnel-port: ${{ secrets.VIA_TUNNEL_PORT }}
+    tunnel-host-key-fingerprints: ${{ secrets.VIA_TUNNEL_HOST_KEY_FINGERPRINTS }}
+    password: ${{ secrets.VIA_TERMINAL_PASSWORD }}
     tunnel-name: debug-${{ github.run_id }}
 ```
 
-### Production Usage (API Key Mode)
+The step does not end on its own: the job stays alive while the session is open. Put it last, or behind a condition, for example only when the tests failed:
 
 ```yaml
-- uses: asd-engineering/asd-devinci@v1
-  with:
-    api-key: ${{ secrets.ASD_API_KEY }}
-    tunnel-name: debug-${{ github.run_id }}
-    ttl-minutes: 15
-```
-
-### Pre-existing Credentials (from CLI)
-
-```yaml
-- uses: asd-engineering/asd-devinci@v1
-  with:
-    client-id: ${{ inputs.client-id }}
-    client-secret: ${{ inputs.client-secret }}
-    tunnel-host: ${{ inputs.tunnel-host }}
-    tunnel-port: ${{ inputs.tunnel-port }}
-```
-
-### VS Code in Browser
-
-```yaml
-- uses: asd-engineering/asd-devinci@v1
-  with:
-    api-key: ${{ secrets.ASD_API_KEY }}
-    interface: codeserver
-    tunnel-name: vscode-${{ github.run_id }}
-```
-
-## Inputs
-
-| Input | Description | Default |
-|-------|-------------|---------|
-| `api-key` | ASD API key with `cicd:provision` scope | - |
-| `interface` | Interface type: `ttyd` (terminal) or `codeserver` (VS Code) | `ttyd` |
-| `shell` | Shell: `bash`, `zsh`, `powershell` | `bash` |
-| `username` | Basic auth username | `asd` |
-| `password` | Basic auth password (auto-generated if empty) | - |
-| `tunnel-name` | Subdomain prefix | Short SHA |
-| `tunnel-host` | Tunnel server hostname (auto-detected from API) | - |
-| `tunnel-port` | Tunnel server SSH port (auto-detected from API) | - |
-| `client-id` | Pre-existing ASD client ID (skips provisioning) | - |
-| `client-secret` | Pre-existing ASD client secret | - |
-| `direct` | Use `--direct` flag for asd expose | `false` |
-| `ttl-minutes` | Token TTL in minutes (0 = no expiry, API key mode only) | `0` |
-| `asd-version` | ASD CLI release tag | `latest` |
-| `api-endpoint` | ASD API endpoint | `https://api.asd.host` |
-
-## Outputs
-
-| Output | Description |
-|--------|-------------|
-| `url` | Session URL with embedded credentials |
-| `url-base` | Session URL without credentials |
-| `tunnel-user` | Tunnel client ID |
-| `local-port` | Local service port |
-| `expires-at` | Token expiration (ISO 8601) |
-
-## Authentication Modes
-
-### 1. Pre-existing Credentials (Fastest)
-
-When `client-id` and `client-secret` are provided, provisioning is skipped entirely. Requires `tunnel-host` and `tunnel-port` to be set explicitly. Used by `asd terminal` CLI which passes credentials from its local registry.
-
-### 2. API Key Mode (Recommended)
-
-Use an API key with `cicd:provision` scope. The API returns all server details (host, port, ownership) automatically.
-
-1. Create an API key at [asd.host/workspace/api-keys](https://asd.host/workspace/api-keys)
-2. Enable the `cicd:provision` scope
-3. Add as a repository secret named `ASD_API_KEY`
-
-### 3. Ephemeral Mode (No Setup)
-
-For quick debugging without any configuration. Limited TTL and rate limited.
-
-```yaml
-- uses: asd-engineering/asd-devinci@v1
-```
-
-## Server Discovery
-
-Tunnel server details are resolved automatically:
-
-- **API key mode**: `credential-provision` returns `tunnel_host`, `tunnel_port`, `ownership_type`
-- **Ephemeral mode**: `create-ephemeral-token` returns the same fields
-- **Pre-existing**: Must provide `tunnel-host` and `tunnel-port` explicitly
-
-URL construction adapts to ownership type:
-- **Shared**: `https://{name}-{client-id}.{host}/`
-- **Dedicated/Self-hosted**: `https://{name}.{host}/`
-
-## Examples
-
-### Debug a Failing Job
-
-```yaml
-name: Debug Workflow
-
-on:
-  workflow_dispatch:
-
 jobs:
-  debug:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
     steps:
       - uses: actions/checkout@v4
 
@@ -140,96 +91,104 @@ jobs:
         run: npm test
         continue-on-error: true
 
-      - name: Start DevInCi on failure
+      - name: Open a terminal on failure
         if: steps.tests.outcome == 'failure'
-        uses: asd-engineering/asd-devinci@v1
+        uses: viaalink/ci-terminal@v2
         with:
-          api-key: ${{ secrets.ASD_API_KEY }}
+          tunnel-key: ${{ secrets.VIA_TUNNEL_KEY }}
+          tunnel-key-id: ${{ secrets.VIA_TUNNEL_KEY_ID }}
+          tunnel-host: ${{ secrets.VIA_TUNNEL_HOST }}
+          tunnel-port: ${{ secrets.VIA_TUNNEL_PORT }}
+          tunnel-host-key-fingerprints: ${{ secrets.VIA_TUNNEL_HOST_KEY_FINGERPRINTS }}
+          password: ${{ secrets.VIA_TERMINAL_PASSWORD }}
           tunnel-name: debug-${{ github.run_id }}
 ```
 
-### Interactive Development with VS Code
+For VS Code in the browser, add `interface: codeserver`.
 
-```yaml
-name: Development Environment
+`deployments: write` lets the action add a "View deployment" button to the run; without it the session still works.
 
-on:
-  workflow_dispatch:
-    inputs:
-      ttl:
-        description: 'Session duration (minutes)'
-        default: '30'
+## Start, stop and manage a session
 
-jobs:
-  dev:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+| What | How |
+|------|-----|
+| Start a session | `via gh terminal` |
+| See the sessions that are running | `via gh active` |
+| Stop a session | `via gh stop` (asks which when more than one runs), or `via gh stop <run-id>` |
+| See recent runs | `via gh runs` |
+| List the workflows you can start | `via gh list` |
+| Sign the GitHub CLI in | `via gh login` |
 
-      - name: Setup environment
-        run: npm install
+A session also ends when you cancel the run on GitHub, when the action's `timeout-minutes` input is reached, or when the job reaches its own `timeout-minutes` (6 hours in the installed workflow, the GitHub maximum for hosted runners).
 
-      - name: Start VS Code via DevInCi
-        uses: asd-engineering/asd-devinci@v1
-        with:
-          api-key: ${{ secrets.ASD_API_KEY }}
-          interface: codeserver
-          tunnel-name: dev-${{ github.actor }}
-          ttl-minutes: ${{ github.event.inputs.ttl }}
-```
+On the way out, and also when a step of the action fails, the action:
 
-## Security
+- stops the exposure (`via expose stop`), so the relay address is no longer public, and the terminal or VS Code server;
+- stops Caddy if the action started it (a Caddy that was already running is left alone);
+- puts back the repository's own `.env` exactly as it was before the session (the login lines and whatever `via init` added are gone), or removes `.env` if the repository had none;
+- marks the deployment inactive.
 
-- Credentials are embedded in the URL for one-click access
-- URLs use HTTPS with TLS encryption
-- Tokens have configurable TTL (ephemeral mode uses short-lived tokens)
-- Basic auth protects the endpoint
-- Secrets are masked in logs via `::add-mask::`
+The log has one `[cleanup]` line for each of these, or says why there was nothing to do. A final `if: always()` step repeats this for anything a cancelled step could not finish. Other files the session created (`via init` output, the `workspace/` directory, anything you made in the terminal) stay.
 
-## Requirements
+## Your own runners
 
-- ubuntu, macos, or windows runner
-- Internet access for tunnel connection
-- Optional: ASD API key for production use
+The session works the same on self-hosted runners: choose `self-hosted` as the operating system in `via gh terminal`, or set `runs-on` in your own workflow.
+
+- The runner needs outbound SSH to the relay port (2222 unless `VIA_TUNNEL_PORT` says otherwise), HTTPS to GitHub (the CLI installer), and `bash`, `curl` and `jq`; on Windows also PowerShell and Git Bash.
+- Linux, macOS and Windows runners are supported (x64; arm64 on Linux and macOS).
+- A self-hosted runner keeps its disk between jobs. The action restores `.env` (see above), but anything else the session created stays. Prefer ephemeral runners, or a runner dedicated to these sessions.
+
+## Security notes
+
+- **Whoever can open the terminal can read the relay key on the runner.** The tunnel runs on the runner with that key. That is why the key belongs to a device enrolled for CI alone: if it leaks, remove that device from the relay.
+- Anyone who can start the workflow can open a session with the repository's secrets in reach. Keep `workflow_dispatch` workflows that use this action to people you would give that access.
+- The session is behind a login (basic auth) and served over HTTPS by your relay. The output `url` embeds the login, for one-click access: treat it like a password. The password, its URL-encoded forms and the `url` output are masked in the logs, and the relay host and key id are not printed.
+- The relay's host key is pinned (`VIA_TUNNEL_HOST_KEY_FINGERPRINTS`): the runner refuses a relay that does not present it.
+
+## Inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `tunnel-key` | Relay device key (secret `VIA_TUNNEL_KEY`) | required |
+| `tunnel-key-id` | Relay device key id (`VIA_TUNNEL_KEY_ID`) | required |
+| `tunnel-host` | Relay host (`VIA_TUNNEL_HOST`) | required |
+| `tunnel-port` | Relay SSH port (`VIA_TUNNEL_PORT`) | 2222 |
+| `tunnel-host-key-fingerprints` | Relay host key fingerprints (`VIA_TUNNEL_HOST_KEY_FINGERPRINTS`) | required |
+| `password` | Login password (`VIA_TERMINAL_PASSWORD`) | required |
+| `username` | Login username (letters, digits, `.`, `_`, `-`) | `via` |
+| `interface` | `terminal` (ttyd) or `codeserver` (VS Code) | `terminal` |
+| `shell` | `bash`, `zsh` or `powershell` | `bash` |
+| `tunnel-name` | Name of the session, the first label of its hostname | short commit SHA |
+| `cli-version` | Viaalink CLI: `latest`, a release tag or a nightly tag | `latest` |
+| `timeout-minutes` | End the session after this many minutes (0 = at cancel or job timeout) | `0` |
+
+## Outputs
+
+| Output | Description |
+|--------|-------------|
+| `url` | Session URL with the login embedded (treat it like a password) |
+| `url-base` | Session URL without the login |
+| `session-name` | Name the session was published under |
+| `local-port` | Port of the interface on the runner (empty when the terminal listens on a socket, Linux and macOS) |
 
 ## Troubleshooting
 
-### "Failed to provision credentials"
+**"Missing inputs"**: a secret is not set, or not passed. Run `via gh setup` in the repository, and check the `with:` block names the `VIA_*` secrets (secrets of a fork are not passed to pull-request runs).
 
-1. Check your API key has `cicd:provision` scope
-2. Verify the key is not expired
-3. Check rate limits (ephemeral mode)
+**`via expose` fails**: check that the runner can reach the relay's SSH port, that the device is still enrolled on the relay, that `VIA_TUNNEL_HOST` is the relay's host, and that `VIA_TUNNEL_HOST_KEY_FINGERPRINTS` matches the relay's host key.
 
-### "Tunnel connection failed"
+**The URL does not answer yet**: the interface can take a few seconds after the URL appears. The run log shows what was published.
 
-1. Verify firewall allows outbound SSH (port 2223)
-2. Check the tunnel server is accessible
-3. Try a different tunnel-host
+## Also available
 
-### "Interface not accessible"
-
-1. Wait a few seconds for initialization
-2. Check the local-port output
-3. Verify the interface started successfully
-
-## Also Available
-
-- **GitLab CI/CD Component**: [accelerated-software-development/devinci](https://gitlab.com/explore/catalog/accelerated-software-development/devinci)
-
-## Release
-
-Use `@v1` for the latest stable version:
-
-```yaml
-- uses: asd-engineering/asd-devinci@v1
-```
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
+- **GitLab CI/CD component**: [accelerated-software-development/devinci](https://gitlab.com/explore/catalog/accelerated-software-development/devinci)
 
 ## Links
 
-- [ASD](https://asd.host)
-- [Documentation](https://asd.host/docs)
-- [API Key Management](https://asd.host/workspace/api-keys)
+- [Viaalink](https://viaalink.com)
+- [Viaalink Relay plans](https://viaalink.com/relay#plans)
+- [Viaalink CLI](https://github.com/viaalink/cli)
+
+## License
+
+MIT, see [LICENSE](LICENSE).

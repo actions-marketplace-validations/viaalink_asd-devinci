@@ -1,170 +1,221 @@
-name: 'ASD DevInCi'
-description: 'Full dev environment in CI runners with web terminal, VS Code, and ASD tunnels'
-author: 'ASD Engineering (Accelerated Software Development B.V.)'
+name: 'Viaalink CI Terminal'
+description: 'A browser terminal or VS Code on your CI runner, published through your own Viaalink Relay, behind a login'
+author: 'Viaalink'
 
 branding:
   icon: 'code'
   color: 'purple'
 
+# Secrets: `via gh setup` stores them in the repository; `via auth export`
+# prints the relay values for storing them by hand. Pass them as
+# ${{ secrets.VIA_* }}. GitHub does not enforce `required` on composite
+# actions: the credentials step checks them and stops with the setup steps.
 inputs:
-  api-key:
-    description: 'ASD API key with cicd:provision scope (provisions long-lived credentials)'
-    required: false
+  tunnel-key:
+    description: 'Relay device key (base64). Secret VIA_TUNNEL_KEY.'
+    required: true
 
-  interface:
-    description: 'Interface type: ttyd (web terminal) or codeserver (VS Code in browser)'
-    default: 'ttyd'
-
-  shell:
-    description: 'Shell: bash, zsh, powershell'
-    default: 'bash'
-
-  username:
-    description: 'Basic auth username'
-    default: 'asd'
-
-  password:
-    description: 'Basic auth password (auto-generated if empty)'
-    required: false
-
-  tunnel-name:
-    description: 'Subdomain prefix (default: short SHA)'
-    required: false
+  tunnel-key-id:
+    description: 'Relay device key id. Secret VIA_TUNNEL_KEY_ID.'
+    required: true
 
   tunnel-host:
-    description: 'Tunnel server hostname (auto-detected from API response)'
-    default: ''
+    description: 'Relay host. Secret VIA_TUNNEL_HOST.'
+    required: true
 
   tunnel-port:
-    description: 'Tunnel server SSH port (auto-detected from API response)'
+    description: 'Relay SSH port. Secret VIA_TUNNEL_PORT (optional; the CLI uses 2222 when empty).'
+    required: false
     default: ''
 
-  region:
-    description: 'Tunnel server region (synced from API via just devinci-sync-regions)'
-    required: false
+  tunnel-host-key-fingerprints:
+    description: "The relay's SSH host key fingerprints (SHA256:..., comma separated). Secret VIA_TUNNEL_HOST_KEY_FINGERPRINTS. The CLI never connects to a relay it cannot pin."
+    required: true
 
-  ttl-minutes:
-    description: 'Token TTL in minutes (0 = no expiry, API key mode only)'
-    default: '0'
+  username:
+    description: 'Login username (letters, digits, dots, underscores and hyphens)'
+    default: 'via'
 
-  asd-version:
-    description: 'ASD CLI release tag'
+  password:
+    description: 'Login password. Secret VIA_TERMINAL_PASSWORD.'
+    required: true
+
+  interface:
+    description: 'terminal (ttyd, a web terminal) or codeserver (VS Code in the browser)'
+    default: 'terminal'
+
+  shell:
+    description: 'Shell of the terminal: bash, zsh or powershell'
+    default: 'bash'
+
+  tunnel-name:
+    description: 'Name of the session, the first label of its hostname (default: short commit SHA)'
+    default: ''
+
+  cli-version:
+    description: 'Viaalink CLI to install: latest, a release tag (vX.Y.Z) or a nightly tag (vX.Y.Z-nightly.YYYYMMDDTHHMM)'
     default: 'latest'
 
-  api-endpoint:
-    description: 'ASD API endpoint'
-    default: 'https://api.asd.host'
-
-  client-id:
-    description: 'Pre-existing ASD client ID (skips provisioning if provided with client-secret)'
-    required: false
-
-  client-secret:
-    description: 'Pre-existing ASD client secret (required if client-id provided)'
-    required: false
-
-  direct:
-    description: 'Use --direct flag for asd expose (bypass Caddy proxy)'
-    default: 'false'
+  timeout-minutes:
+    description: 'End the session after this many minutes (0 = when the run is cancelled or the job times out)'
+    default: '0'
 
 outputs:
   url:
-    description: 'Session URL with embedded credentials'
+    description: 'Session URL with the login embedded (treat it like a password)'
     value: ${{ steps.connect.outputs.url }}
 
   url-base:
-    description: 'Session URL without credentials'
+    description: 'Session URL without the login'
     value: ${{ steps.connect.outputs.url_base }}
 
-  tunnel-user:
-    description: 'Tunnel client ID'
-    value: ${{ steps.provision.outputs.client_id }}
+  session-name:
+    description: 'Name the session was published under'
+    value: ${{ steps.credentials.outputs.session_name }}
 
   local-port:
-    description: 'Local service port'
+    description: "Port of the interface on the runner (empty when the terminal listens on a socket: Linux and macOS)"
     value: ${{ steps.interface.outputs.port }}
-
-  expires-at:
-    description: 'Token expiration (ISO 8601)'
-    value: ${{ steps.provision.outputs.expires_at }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Install ASD CLI
-      id: install
+    - name: Check relay credentials
+      id: credentials
       shell: bash
-      run: bash "${SCRIPTS_DIR}/setup.sh"
+      run: bash "${SCRIPTS_DIR}/credentials.sh"
       env:
         SCRIPTS_DIR: ${{ github.action_path }}/scripts
-        ASD_VERSION: ${{ inputs.asd-version }}
-        RUNNER_OS: ${{ runner.os }}
-        RUNNER_ARCH: ${{ runner.arch }}
+        INPUT_TUNNEL_KEY: ${{ inputs.tunnel-key }}
+        INPUT_TUNNEL_KEY_ID: ${{ inputs.tunnel-key-id }}
+        INPUT_TUNNEL_HOST: ${{ inputs.tunnel-host }}
+        INPUT_TUNNEL_PORT: ${{ inputs.tunnel-port }}
+        INPUT_HOST_KEY_FINGERPRINTS: ${{ inputs.tunnel-host-key-fingerprints }}
+        INPUT_PASSWORD: ${{ inputs.password }}
+        INPUT_USERNAME: ${{ inputs.username }}
+        INPUT_SHELL: ${{ inputs.shell }}
+        INPUT_INTERFACE: ${{ inputs.interface }}
+        INPUT_TUNNEL_NAME: ${{ inputs.tunnel-name }}
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}
+        INPUT_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        GITHUB_SHA: ${{ github.sha }}
 
-    - name: Provision credentials
-      id: provision
+    - name: Install the Viaalink CLI (Linux/macOS)
+      if: runner.os != 'Windows'
       shell: bash
-      run: bash "${SCRIPTS_DIR}/provision.sh"
+      run: bash "${SCRIPTS_DIR}/install-cli.sh"
       env:
         SCRIPTS_DIR: ${{ github.action_path }}/scripts
-        ASD_API_KEY: ${{ inputs.api-key }}
-        ASD_ENDPOINT: ${{ inputs.api-endpoint }}
-        ASD_TUNNEL_HOST: ${{ inputs.tunnel-host }}
-        ASD_TUNNEL_PORT: ${{ inputs.tunnel-port }}
-        TTL_MINUTES: ${{ inputs.ttl-minutes }}
-        REGION: ${{ inputs.region }}
-        INPUT_CLIENT_ID: ${{ inputs.client-id }}
-        INPUT_CLIENT_SECRET: ${{ inputs.client-secret }}
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        GITHUB_RUN_ID: ${{ github.run_id }}
+        REQUESTED_VERSION: ${{ inputs.cli-version }}
+        # The installer looks the release up on the GitHub API; the job's
+        # token lifts the 60-requests-per-hour anonymous limit.
+        GITHUB_TOKEN: ${{ github.token }}
 
-    - name: Start interface
+    - name: Install the Viaalink CLI (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: '& "$env:SCRIPTS_DIR/install-cli.ps1"'
+      env:
+        SCRIPTS_DIR: ${{ github.action_path }}/scripts
+        REQUESTED_VERSION: ${{ inputs.cli-version }}
+        GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Start the interface
       id: interface
       shell: bash
       run: bash "${SCRIPTS_DIR}/start-interface.sh"
       env:
         SCRIPTS_DIR: ${{ github.action_path }}/scripts
-        INTERFACE_TYPE: ${{ inputs.interface }}
+        STATE_DIR: ${{ steps.credentials.outputs.state_dir }}
+        SESSION_NAME: ${{ steps.credentials.outputs.session_name }}
+        SESSION_INTERFACE: ${{ steps.credentials.outputs.interface }}
         SESSION_USERNAME: ${{ inputs.username }}
         SESSION_PASSWORD: ${{ inputs.password }}
         SESSION_SHELL: ${{ inputs.shell }}
+        # The login as real step env too, so the CLI never depends on
+        # reading it back from .env (its .env autoload).
+        ASD_BASIC_AUTH_USERNAME: ${{ inputs.username }}
+        ASD_BASIC_AUTH_PASSWORD: ${{ inputs.password }}
+        ASD_TTYD_USERNAME: ${{ inputs.username }}
+        ASD_TTYD_PASSWORD: ${{ inputs.password }}
+        ASD_TTYD_SHELL_CMD: ${{ inputs.shell }}
+        ASD_CODESERVER_AUTH: password
+        ASD_CODESERVER_PASSWORD: ${{ inputs.password }}
+        ASD_NON_INTERACTIVE: '1'
+        ASD_WORKSPACE_DIR: ${{ github.workspace }}/workspace
 
-    - name: Write tunnel URL
-      id: tunnel-url
-      shell: bash
-      run: |
-        NAME="${TUNNEL_NAME:-${GITHUB_SHA:0:7}}"
-        if [ "$APPEND_USER_TO_SUBDOMAIN" = "true" ] && [ -n "$ASD_CLIENT_ID" ]; then
-          URL_HOST="${NAME}-${ASD_CLIENT_ID}.${ASD_TUNNEL_HOST}"
-        else
-          URL_HOST="${NAME}.${ASD_TUNNEL_HOST}"
-        fi
-        TUNNEL_URL="https://${URL_HOST}/"
-        mkdir -p workspace
-        echo "${TUNNEL_URL}" > workspace/tunnel-url.txt
-        echo "tunnel_url=${TUNNEL_URL}" >> "$GITHUB_OUTPUT"
-      env:
-        TUNNEL_NAME: ${{ inputs.tunnel-name }}
-        GITHUB_SHA: ${{ github.sha }}
-
-    - name: Upload tunnel URL
-      uses: actions/upload-artifact@v4
-      with:
-        name: tunnel-url
-        path: workspace/tunnel-url.txt
-        if-no-files-found: error
-        retention-days: 1
-
-    - name: Connect tunnel
+    # Publishes the session and returns; the tunnel keeps running for the
+    # rest of the job. The URL is read back from the CLI, never assembled.
+    - name: Publish through the relay
       id: connect
       shell: bash
       run: bash "${SCRIPTS_DIR}/connect.sh"
       env:
         SCRIPTS_DIR: ${{ github.action_path }}/scripts
-        TUNNEL_NAME: ${{ inputs.tunnel-name }}
-        INTERFACE_TYPE: ${{ inputs.interface }}
-        DIRECT_MODE: ${{ inputs.direct }}
-        GITHUB_SHA: ${{ github.sha }}
+        STATE_DIR: ${{ steps.credentials.outputs.state_dir }}
+        SESSION_NAME: ${{ steps.credentials.outputs.session_name }}
+        SESSION_INTERFACE: ${{ steps.credentials.outputs.interface }}
+        SESSION_TIMEOUT_MINUTES: ${{ steps.credentials.outputs.timeout_minutes }}
+        SESSION_TARGET: ${{ steps.interface.outputs.target }}
+        # Runner env under the names every CLI release reads; the secrets
+        # are VIA_* (the CLI copies VIA_X onto ASD_X from 3.2 on).
+        ASD_TUNNEL_KEY: ${{ inputs.tunnel-key }}
+        ASD_TUNNEL_KEY_ID: ${{ inputs.tunnel-key-id }}
+        ASD_TUNNEL_HOST: ${{ inputs.tunnel-host }}
+        ASD_TUNNEL_PORT: ${{ inputs.tunnel-port }}
+        ASD_TUNNEL_HOST_KEY_FINGERPRINTS: ${{ inputs.tunnel-host-key-fingerprints }}
+        ASD_BASIC_AUTH_USERNAME: ${{ inputs.username }}
+        ASD_BASIC_AUTH_PASSWORD: ${{ inputs.password }}
+        ASD_NON_INTERACTIVE: '1'
+        ASD_WORKSPACE_DIR: ${{ github.workspace }}/workspace
         GITHUB_TOKEN: ${{ github.token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
-        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_SHA: ${{ github.sha }}
+
+    # `via gh terminal` reads tunnel-url.txt from this artifact. The name
+    # carries the session name, so two sessions in one run do not collide.
+    - name: Upload tunnel URL
+      uses: actions/upload-artifact@v4
+      with:
+        name: tunnel-url-${{ steps.credentials.outputs.session_name }}
+        path: ${{ steps.credentials.outputs.state_dir }}/tunnel-url.txt
+        if-no-files-found: error
+        retention-days: 1
+
+    - name: Keep session alive
+      shell: bash
+      run: exec bash "${SCRIPTS_DIR}/keepalive.sh"
+      env:
+        SCRIPTS_DIR: ${{ github.action_path }}/scripts
+        STATE_DIR: ${{ steps.credentials.outputs.state_dir }}
+        SESSION_NAME: ${{ steps.credentials.outputs.session_name }}
+        SESSION_TIMEOUT_MINUTES: ${{ steps.credentials.outputs.timeout_minutes }}
+        DEPLOY_ID: ${{ steps.connect.outputs.deploy_id }}
+        # The login as real env, as in the steps before: via expose stop
+        # must not depend on the compiled binary's .env load.
+        ASD_BASIC_AUTH_USERNAME: ${{ inputs.username }}
+        ASD_BASIC_AUTH_PASSWORD: ${{ inputs.password }}
+        ASD_NON_INTERACTIVE: '1'
+        ASD_WORKSPACE_DIR: ${{ github.workspace }}/workspace
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+
+    # Runs whatever the steps above could not: stop the exposure, the
+    # interface and the Caddy this action started, restore (or remove) .env,
+    # mark the deployment inactive. Logs each thing it does, or why there
+    # was nothing left to do.
+    - name: End the session
+      if: always()
+      shell: bash
+      run: bash "${SCRIPTS_DIR}/cleanup.sh"
+      env:
+        SCRIPTS_DIR: ${{ github.action_path }}/scripts
+        STATE_DIR: ${{ steps.credentials.outputs.state_dir }}
+        SESSION_NAME: ${{ steps.credentials.outputs.session_name }}
+        DEPLOY_ID: ${{ steps.connect.outputs.deploy_id }}
+        ASD_BASIC_AUTH_USERNAME: ${{ inputs.username }}
+        ASD_BASIC_AUTH_PASSWORD: ${{ inputs.password }}
+        ASD_NON_INTERACTIVE: '1'
+        ASD_WORKSPACE_DIR: ${{ github.workspace }}/workspace
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}

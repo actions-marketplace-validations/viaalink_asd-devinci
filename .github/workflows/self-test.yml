@@ -1,0 +1,69 @@
+name: Self-test
+
+# Runs this action from the current checkout. Needs the secrets `via gh setup`
+# stores: VIA_TUNNEL_KEY, VIA_TUNNEL_KEY_ID, VIA_TUNNEL_HOST,
+# VIA_TUNNEL_HOST_KEY_FINGERPRINTS, VIA_TERMINAL_PASSWORD and (optional)
+# VIA_TUNNEL_PORT.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner OS'
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+      interface:
+        description: 'Interface type'
+        default: 'terminal'
+        type: choice
+        options:
+          - terminal
+          - codeserver
+      shell:
+        description: 'Shell'
+        default: 'bash'
+        type: choice
+        options:
+          - bash
+          - zsh
+          - powershell
+      username:
+        description: 'Login username'
+        default: 'via'
+      cli-version:
+        description: 'Viaalink CLI version (release tag, nightly tag, or latest)'
+        default: 'latest'
+      timeout-minutes:
+        description: 'End the session after this many minutes (0 = at cancel)'
+        default: '0'
+
+concurrency:
+  group: ci-terminal-${{ github.actor }}
+  cancel-in-progress: false
+
+jobs:
+  ci-terminal:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          tunnel-key: ${{ secrets.VIA_TUNNEL_KEY }}
+          tunnel-key-id: ${{ secrets.VIA_TUNNEL_KEY_ID }}
+          tunnel-host: ${{ secrets.VIA_TUNNEL_HOST }}
+          tunnel-port: ${{ secrets.VIA_TUNNEL_PORT }}
+          tunnel-host-key-fingerprints: ${{ secrets.VIA_TUNNEL_HOST_KEY_FINGERPRINTS }}
+          password: ${{ secrets.VIA_TERMINAL_PASSWORD }}
+          interface: ${{ inputs.interface }}
+          shell: ${{ inputs.shell }}
+          username: ${{ inputs.username }}
+          cli-version: ${{ inputs.cli-version }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}

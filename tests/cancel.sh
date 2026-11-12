@@ -22,6 +22,7 @@ check() { local what="$1"; shift; if "$@"; then pass "$what"; else fail "$what";
 
 # A unique interval, so a leftover keep-alive sleep can be found by its args.
 INTERVAL=$(( 3000 + RANDOM % 900 ))
+export LOGIN_PROBE_INTERVAL=0
 
 make_stubs() {
   local t="$1"
@@ -64,7 +65,12 @@ EOF
 EOF
   cat > "$t/bin/curl" <<'EOF'
 #!/bin/bash
-if [ -f "$FAKE/exposed" ]; then printf 401; else printf 404; fi
+# 401 with the login's Basic challenge while exposed (headers to -D), 404 after.
+hdrfile=""; prev=""; for a in "$@"; do [ "$prev" = "-D" ] && hdrfile="$a"; prev="$a"; done
+if [ -f "$FAKE/exposed" ]; then
+  [ -z "$hdrfile" ] || printf 'HTTP/2 401\r\nwww-authenticate: Basic realm="restricted"\r\n\r\n' > "$hdrfile"
+  printf 401
+else printf 404; fi
 EOF
   chmod +x "$t/bin/"*
 }
